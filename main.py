@@ -75,10 +75,17 @@ import numpy as np
 import random
 
 
-def join_matrixes(tl, tr, bl, br):
+def join_matrixes(tl, tr, bl, br, num_noise_bits=0):
     result = []
     for list1, list2 in itertools.chain(zip(tl, tr), zip(bl, br)):
         result.append(list1 + list2)
+    while num_noise_bits > 0:
+        candidate_index = math.floor(random.random() * len(result) * len(result))
+        candidate_x = math.floor(random.random() * len(result))
+        candidate_y = math.floor(random.random() * len(result))
+        if result[candidate_x][candidate_y] == 0:
+            result[candidate_x][candidate_y] = 1
+            num_noise_bits -= 1
     return np.array(result)
 
 
@@ -110,23 +117,29 @@ class Trainer:
         self.edge_size = edge_size
         self.num_input_neurons = edge_size ** 2
 
-    def create_data_training(self, keep_percentage=100):
+    def create_data_training(self, keep_percentage=100, noise_percentage=10):
         zero_matrix = [[0] * (self.edge_size // 2)] * (self.edge_size // 2)
         for i in range(1, 2 ** self.edge_size):
             elems = to_base2(i, (self.edge_size // 2) ** 2)
             my_matrix = split_into_square_matrix(elems, self.edge_size // 2)
+            number_of_ones = sum(elems)
+            num_noise_bits = number_of_ones * noise_percentage // 100
             if random.random() * 100 < keep_percentage:
                 yield join_matrixes(
-                    my_matrix, zero_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TL'
+                    my_matrix, zero_matrix, zero_matrix, zero_matrix, num_noise_bits
+                ).reshape(self.num_input_neurons), 'TL'
             if random.random() * 100 < keep_percentage:
                 yield join_matrixes(
-                    zero_matrix, my_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TR'
+                    zero_matrix, my_matrix, zero_matrix, zero_matrix, num_noise_bits
+                ).reshape(self.num_input_neurons), 'TR'
             if random.random() * 100 < keep_percentage:
                 yield join_matrixes(
-                    zero_matrix, zero_matrix, my_matrix, zero_matrix).reshape(self.num_input_neurons), 'BL'
+                    zero_matrix, zero_matrix, my_matrix, zero_matrix, num_noise_bits
+                ).reshape(self.num_input_neurons), 'BL'
             if random.random() * 100 < keep_percentage:
                 yield join_matrixes(
-                    zero_matrix, zero_matrix, zero_matrix, my_matrix).reshape(self.num_input_neurons), 'BR'
+                    zero_matrix, zero_matrix, zero_matrix, my_matrix, num_noise_bits
+                ).reshape(self.num_input_neurons), 'BR'
 
 
 class Model:
@@ -187,7 +200,6 @@ class Model:
             dC_over_dw_i_j_partial = np.outer(dC_over_db_i_partial, data)
             dC_over_dw_i_j += dC_over_dw_i_j_partial
 
-        # todo - adjust weights and biases
         self.weights -= dC_over_dw_i_j
         self.biases -= dC_over_db_i
 
@@ -211,8 +223,6 @@ class Model:
         return sig, sig_derived, z_i
 
     def get_stats_for_data(self, data_and_labels_set):
-        # todo - calc cost and precision
-        cost = 0
         precision_hits = 0
         precision_total = 0
         c = Counter()
@@ -243,15 +253,15 @@ class Stats:
         self.precision = precision
 
 
-def main(edge_size, desired_precision):
+def main(edge_size, desired_precision, noise_percentage):
     np.set_printoptions(precision=3, suppress=True)
 
 
     round = 0
     model = Model(edge_size)
     trainer = Trainer(edge_size)
-    training_data_set = list(trainer.create_data_training(keep_percentage=80))
-    test_data_set = list(trainer.create_data_training(keep_percentage=20))
+    training_data_set = list(trainer.create_data_training(keep_percentage=80, noise_percentage=noise_percentage))
+    test_data_set = list(trainer.create_data_training(keep_percentage=20, noise_percentage=noise_percentage))
     rounds_it_took_to_find_the_solution = []
     global_round = 0
     previous_precision = -1
@@ -275,7 +285,7 @@ def main(edge_size, desired_precision):
             previous_precision = -1
             rounds_with_current_precision = -1
 
-        if round > 10_000:  # TODO - find a better wqy to know whether the improvements have stopped
+        if round > 10_000:
 
             rounds_it_took_to_find_the_solution.append(1_000_000_000_000)
             model = Model(edge_size)
@@ -293,7 +303,10 @@ def main(edge_size, desired_precision):
         if len(rounds_it_took_to_find_the_solution) > 2:
             good_solutions = len([e for e in rounds_it_took_to_find_the_solution if e < 1e12])
             print(
-                f'{edge_size}x{edge_size}, prec.:{desired_precision}, rounds:{global_round}, '
+                f'{edge_size}x{edge_size}, '
+                f'noise: {noise_percentage}%, '
+                f'prec.:{desired_precision}, '
+                f'rounds:{global_round}, '
                 f'attempts: {len(rounds_it_took_to_find_the_solution)}, '
                 f'good: {100 * good_solutions / len(rounds_it_took_to_find_the_solution):.2f}%, '
                 f'percentiles: '
@@ -331,7 +344,22 @@ WITH TEST DATA != TRAINING DATA
 10x10, prec.:0.95, rounds:1318, attempts: 78, good: 84.62%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
 12x12, prec.:0.95, rounds:421, attempts: 19, good: 84.21%, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
 16x16, prec.:0.95, rounds:118, attempts: 3, good: 66.67%, percentiles: [1.0e+00 1.0e+00 1.0e+00 4.0e+11 8.0e+11 9.8e+11 1.0e+12]
+-----
+WITH  NOISE
+4x4, noise: 10%, prec.:0.95, rounds:18352, attempts: 4939, good: 100.00%, percentiles: [ 1.  2.  3.  4.  7. 14. 24.]
+6x6, noise: 10%, prec.:0.95, rounds:8131, attempts: 280, good: 79.64%, percentiles: [1.e+00 1.e+00 1.e+00 4.e+00 1.e+12 1.e+12 1.e+12]
+8x8, noise: 10%, prec.:0.95, rounds:2465, attempts: 99, good: 81.82%, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+10x10, noise: 10%, prec.:0.95, rounds:548, attempts: 40, good: 87.50%, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
 
+4x4, noise: 30%, prec.:0.95, rounds:12855, attempts: 4683, good: 100.00%, percentiles: [ 1.  1.  1.  3.  6. 13. 24.]
+6x6, noise: 30%, prec.:0.95, rounds:5463, attempts: 71, good: 50.70%, percentiles: [1.0e+00 1.0e+00 9.3e+01 1.0e+12 1.0e+12 1.0e+12 1.0e+12]
+10x10, noise: 30%, prec.:0.95, rounds:484, attempts: 41, good: 90.24%, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12]
+
+4x4, noise: 30%, prec.:1.0, rounds:6770, attempts: 1826, good: 100.00%, percentiles: [ 1.    1.    3.    4.    8.   18.75 40.  ]
+6x6, noise: 30%, prec.:1.0, rounds:4292, attempts: 63, good: 52.38%, percentiles: [1.0e+00 1.0e+00 3.4e+01 1.0e+12 1.0e+12 1.0e+12 1.0e+12]
+8x8, noise: 30%, prec.:1.0, rounds:1266, attempts: 19, good: 47.37%, percentiles: [1.e+00 1.e+00 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
+10x10, noise: 30%, prec.:1.0, rounds:1362, attempts: 17, good: 23.53%, percentiles: [1.e+00 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
+12x12, noise: 30%, prec.:1.0, rounds:1363, attempts: 14, good: 7.14%, percentiles: [1.e+12 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
 """
 if __name__ == '__main__':
-    main(edge_size=16, desired_precision=0.95)
+    main(edge_size=12, desired_precision=1.0, noise_percentage=30)
