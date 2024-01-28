@@ -69,6 +69,7 @@ for 4x4 matrixes, it trains in 3-4 turns
 """
 import itertools
 import math
+import time
 from collections import Counter
 
 import numpy as np
@@ -254,6 +255,7 @@ class Stats:
 
 
 def main(edge_size, desired_precision, noise_percentage):
+    t0 = time.time()
     np.set_printoptions(precision=3, suppress=True)
 
 
@@ -301,12 +303,13 @@ def main(edge_size, desired_precision, noise_percentage):
             rounds_with_current_precision = -1
 
         if len(rounds_it_took_to_find_the_solution) > 2:
+            t1 = time.time()
             good_solutions = len([e for e in rounds_it_took_to_find_the_solution if e < 1e12])
             print(
                 f'{edge_size}x{edge_size}, '
                 f'noise: {noise_percentage}%, '
                 f'prec.:{desired_precision}, '
-                f'rounds:{global_round}, '
+                f'rounds:{global_round}, rps={global_round/(t1-t0):.2f}, '
                 f'attempts: {len(rounds_it_took_to_find_the_solution)}, '
                 f'good: {100 * good_solutions / len(rounds_it_took_to_find_the_solution):.2f}%, '
                 f'percentiles: '
@@ -362,4 +365,4 @@ WITH  NOISE
 12x12, noise: 30%, prec.:1.0, rounds:1363, attempts: 14, good: 7.14%, percentiles: [1.e+12 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
 """
 if __name__ == '__main__':
-    main(edge_size=12, desired_precision=1.0, noise_percentage=30)
+    main(edge_size=8, desired_precision=1.0, noise_percentage=30)
