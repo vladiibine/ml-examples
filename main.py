@@ -59,8 +59,9 @@ so what are we gonna do about this?
 4. test the model
 --------------
 TODOS:
-1. make matrix be NxN not just 4x4
-2. make the training data more confusing and add more noise
+1. [v] make matrix be NxN not just 4x4
+2. [v] don't feed all the permutations to the model
+3. make the training data more confusing and add more noise
 
 -----
 Observations:
@@ -109,15 +110,23 @@ class Trainer:
         self.edge_size = edge_size
         self.num_input_neurons = edge_size ** 2
 
-    def create_data_training(self):
+    def create_data_training(self, keep_percentage=100):
         zero_matrix = [[0] * (self.edge_size // 2)] * (self.edge_size // 2)
         for i in range(1, 2 ** self.edge_size):
             elems = to_base2(i, (self.edge_size // 2) ** 2)
             my_matrix = split_into_square_matrix(elems, self.edge_size // 2)
-            yield join_matrixes(my_matrix, zero_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TL'
-            yield join_matrixes(zero_matrix, my_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TR'
-            yield join_matrixes(zero_matrix, zero_matrix, my_matrix, zero_matrix).reshape(self.num_input_neurons), 'BL'
-            yield join_matrixes(zero_matrix, zero_matrix, zero_matrix, my_matrix).reshape(self.num_input_neurons), 'BR'
+            if random.random() * 100 < keep_percentage:
+                yield join_matrixes(
+                    my_matrix, zero_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TL'
+            if random.random() * 100 < keep_percentage:
+                yield join_matrixes(
+                    zero_matrix, my_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TR'
+            if random.random() * 100 < keep_percentage:
+                yield join_matrixes(
+                    zero_matrix, zero_matrix, my_matrix, zero_matrix).reshape(self.num_input_neurons), 'BL'
+            if random.random() * 100 < keep_percentage:
+                yield join_matrixes(
+                    zero_matrix, zero_matrix, zero_matrix, my_matrix).reshape(self.num_input_neurons), 'BR'
 
 
 class Model:
@@ -234,16 +243,15 @@ class Stats:
         self.precision = precision
 
 
-def main():
+def main(edge_size, desired_precision):
     np.set_printoptions(precision=3, suppress=True)
 
-    edge_size = EDGE_SIZE
-    desired_precision = 0.95
 
     round = 0
     model = Model(edge_size)
     trainer = Trainer(edge_size)
-    training_data_set = list(trainer.create_data_training())
+    training_data_set = list(trainer.create_data_training(keep_percentage=80))
+    test_data_set = list(trainer.create_data_training(keep_percentage=20))
     rounds_it_took_to_find_the_solution = []
     global_round = 0
     previous_precision = -1
@@ -253,7 +261,7 @@ def main():
 
         round += 1
         model.train(training_data_set)
-        stats = model.get_stats_for_data(training_data_set)
+        stats = model.get_stats_for_data(test_data_set)
         if stats.precision != previous_precision:
             previous_precision = stats.precision
             rounds_with_current_precision = 1
@@ -285,37 +293,45 @@ def main():
         if len(rounds_it_took_to_find_the_solution) > 2:
             good_solutions = len([e for e in rounds_it_took_to_find_the_solution if e < 1e12])
             print(
-                f'{edge_size}x{edge_size}, prec.:{desired_precision}, rounds:{global_round}, attempts: {len(rounds_it_took_to_find_the_solution)}, good: {100 *good_solutions/len(rounds_it_took_to_find_the_solution):.2f}%, '
-                f', percentiles: '
-                f'{np.percentile(rounds_it_took_to_find_the_solution, [10,30, 50, 70, 90, 99, 100])}')
+                f'{edge_size}x{edge_size}, prec.:{desired_precision}, rounds:{global_round}, '
+                f'attempts: {len(rounds_it_took_to_find_the_solution)}, '
+                f'good: {100 * good_solutions / len(rounds_it_took_to_find_the_solution):.2f}%, '
+                f'percentiles: '
+                f'{np.percentile(rounds_it_took_to_find_the_solution, [10, 30, 50, 70, 90, 99, 100])}')
 
 
+"""
+PRECISION = 100%
+for 4x4
+4x4, after 14416 rounds, 2600 solution attempts, percentiles: [  1.     3.     4.     6.    12.    32.01 103.  ]
+
+
+for 6x6, the number of rounds to finish training:
+for edge size 6, after 14815, the percentiles: [1.00e+00 1.70e+00 3.25e+01 1.00e+12 1.00e+12 1.00e+12 1.00e+12]
+
+
+for 8x8:
+for edge size 8, after 4126 rounds, the percentiles: [1.830e+01 1.549e+02 1.000e+12 1.000e+12 1.000e+12 1.000e+12 1.000e+12]
+
+ 
+for 10x10
+for edge size 10, after 9273 rounds, the percentiles: [1.e+00 5.e+11 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
+-----------------
+PRECISION = 0.95
+4x4, prec.:0.95, rounds:14727, attempts: 3129, good: 100.00%, , percentiles: [ 1.    1.    3.    4.   11.   32.72 76.  ]
+6x6, prec.:0.95, rounds:8715, attempts: 215, good: 80.93%, , percentiles: [1.e+00 1.e+00 1.e+00 4.e+00 1.e+12 1.e+12 1.e+12]
+8x8, prec.:0.95, rounds:2117, solutions: 54, good: 81.48% attempts, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+10x10, prec.:0.95, rounds:1158, attempts: 47, good: 78.72%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+12x12, prec.:0.95, rounds:875, attempts: 18, good: 55.56%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12 1.e+12]
+------
+WITH TEST DATA != TRAINING DATA
+4x4, prec.:0.95, rounds:4870, attempts: 1677, good: 100.00%, , percentiles: [ 1.  1.  3.  4.  6. 11. 27.]
+6x6, prec.:0.95, rounds:3906, attempts: 137, good: 78.10%, , percentiles: [1.e+00 1.e+00 1.e+00 3.e+00 1.e+12 1.e+12 1.e+12]
+8x8, prec.:0.95, rounds:2544, attempts: 63, good: 74.60%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+01 1.e+12 1.e+12 1.e+12]
+10x10, prec.:0.95, rounds:1318, attempts: 78, good: 84.62%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+12x12, prec.:0.95, rounds:421, attempts: 19, good: 84.21%, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+16x16, prec.:0.95, rounds:118, attempts: 3, good: 66.67%, percentiles: [1.0e+00 1.0e+00 1.0e+00 4.0e+11 8.0e+11 9.8e+11 1.0e+12]
+
+"""
 if __name__ == '__main__':
-    # main()
-
-    """
-    PRECISION = 100%
-    for 4x4
-    4x4, after 14416 rounds, 2600 solution attempts, percentiles: [  1.     3.     4.     6.    12.    32.01 103.  ]
-    
-    
-    for 6x6, the number of rounds to finish training:
-    for edge size 6, after 14815, the percentiles: [1.00e+00 1.70e+00 3.25e+01 1.00e+12 1.00e+12 1.00e+12 1.00e+12]
-    
-    
-    for 8x8:
-    for edge size 8, after 4126 rounds, the percentiles: [1.830e+01 1.549e+02 1.000e+12 1.000e+12 1.000e+12 1.000e+12 1.000e+12]
-    
-     
-    for 10x10
-    for edge size 10, after 9273 rounds, the percentiles: [1.e+00 5.e+11 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
-    -----------------
-    PRECISION = 0.95
-    4x4, prec.:0.95, rounds:14727, attempts: 3129, good: 100.00%, , percentiles: [ 1.    1.    3.    4.   11.   32.72 76.  ]
-    6x6, prec.:0.95, rounds:8715, attempts: 215, good: 80.93%, , percentiles: [1.e+00 1.e+00 1.e+00 4.e+00 1.e+12 1.e+12 1.e+12]
-    8x8, prec.:0.95, rounds:2117, solutions: 54, good: 81.48% attempts, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
-    10x10, prec.:0.95, rounds:1158, attempts: 47, good: 78.72%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
-    
-    """
-    EDGE_SIZE = 12
-    main()
+    main(edge_size=16, desired_precision=0.95)
