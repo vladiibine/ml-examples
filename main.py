@@ -57,6 +57,14 @@ so what are we gonna do about this?
 3. train the formal model, obtaining the weights and biases of the network => the model
 3.1. create a cost function
 4. test the model
+--------------
+TODOS:
+1. make matrix be NxN not just 4x4
+2. make the training data more confusing and add more noise
+
+-----
+Observations:
+for 4x4 matrixes, it trains in 3-4 turns
 """
 import itertools
 import math
@@ -73,26 +81,43 @@ def join_matrixes(tl, tr, bl, br):
     return np.array(result)
 
 
-def to_base2(num):
+def to_base2(num, num_elems):
     result = []
     while num != 0:
         result.append(num % 2)
         num = num // 2
     result.reverse()
-    if len(result) < 4:
-        result = [0] * (4 - len(result)) + result
+    if len(result) < num_elems:
+        result = [0] * (num_elems - len(result)) + result
     return result
 
 
-def create_data_training():
-    zero_matrix = [[0, 0], [0, 0]]
-    for i in range(1, 16):
-        a, b, c, d = to_base2(i)
-        my_matrix = [[a, b], [c, d]]
-        yield join_matrixes(my_matrix, zero_matrix, zero_matrix, zero_matrix).reshape(16), 'TL'
-        yield join_matrixes(zero_matrix, my_matrix, zero_matrix, zero_matrix).reshape(16), 'TR'
-        yield join_matrixes(zero_matrix, zero_matrix, my_matrix, zero_matrix).reshape(16), 'BL'
-        yield join_matrixes(zero_matrix, zero_matrix, zero_matrix, my_matrix).reshape(16), 'BR'
+def split_into_square_matrix(numbers, edge_size):
+    if edge_size ** 2 != len(numbers):
+        raise ValueError("The length of the list is not a perfect square.")
+
+    square_matrix = []
+    for i in range(0, len(numbers), edge_size):
+        row = numbers[i:i + edge_size]
+        square_matrix.append(row)
+
+    return square_matrix
+
+
+class Trainer:
+    def __init__(self, edge_size):
+        self.edge_size = edge_size
+        self.num_input_neurons = edge_size ** 2
+
+    def create_data_training(self):
+        zero_matrix = [[0] * (self.edge_size // 2)] * (self.edge_size // 2)
+        for i in range(1, 2 ** self.edge_size):
+            elems = to_base2(i, (self.edge_size // 2) ** 2)
+            my_matrix = split_into_square_matrix(elems, self.edge_size // 2)
+            yield join_matrixes(my_matrix, zero_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TL'
+            yield join_matrixes(zero_matrix, my_matrix, zero_matrix, zero_matrix).reshape(self.num_input_neurons), 'TR'
+            yield join_matrixes(zero_matrix, zero_matrix, my_matrix, zero_matrix).reshape(self.num_input_neurons), 'BL'
+            yield join_matrixes(zero_matrix, zero_matrix, zero_matrix, my_matrix).reshape(self.num_input_neurons), 'BR'
 
 
 class Model:
@@ -102,15 +127,18 @@ class Model:
     1 output layer with 4 neurons
     """
 
-    def __init__(self, random_init=True, zero_init=False, by_hand=False):
+    def __init__(self, edge_size=4, random_init=True, zero_init=False, by_hand=False):
         # n0 = w0_0 * a0 + w0_1 * a1 + ... +w0_15 *a15 + b0
         # n1 = w1_0*a0 + w1_1*a1 + ... w1_15*a15 +b1
         # ...
         # n3 = w3_0*a0 + ... + w3_15*a15 + b3
         # ...so our weights are
+        self.edge_size = edge_size
+
         if random_init:
-            self.weights = np.array([[random.random() * 2 - 1 for _ in range(16)] for _ in range(4)])
-            self.biases = np.array([random.random() * 32 - 16 for _ in range(4)])
+            self.weights = np.array([[random.random() * 2 - 1 for _ in range(self.edge_size ** 2)] for _ in range(4)])
+            self.biases = np.array(
+                [random.random() * 2 * 0.5 - 0.5 for _ in range(4)])
             return
         if by_hand:
             self.weights = np.array([
@@ -123,7 +151,7 @@ class Model:
 
     def train(self, data_and_label_set):
         dC_over_db_i = np.zeros(4)
-        dC_over_dw_i_j = np.zeros((4, 16))
+        dC_over_dw_i_j = np.zeros((4, (self.edge_size ** 2)))
 
         # C = Sum(a_i -yi)^2 over all of the data, so in our case it's C_0 = SUM(a_0 - y_0)^2 over all of the data
         for data_and_label in data_and_label_set:
@@ -173,7 +201,7 @@ class Model:
         # activations, sigmoid, sigmoid'
         return sig, sig_derived, z_i
 
-    def precision_for(self, data_and_labels_set):
+    def get_stats_for_data(self, data_and_labels_set):
         # todo - calc cost and precision
         cost = 0
         precision_hits = 0
@@ -187,7 +215,7 @@ class Model:
             if estimation == label:
                 precision_hits += 1
             precision_total += 1
-        return Stats(precision_hits/(precision_total or 1))
+        return Stats(precision_hits / (precision_total or 1))
 
 
 def sigmoid_and_derivative(data_array):
@@ -205,19 +233,89 @@ class Stats:
     def __init__(self, precision):
         self.precision = precision
 
+
 def main():
-    artisan_model = Model(by_hand=True, random_init=False)
-    model = Model()
-    training_data_set = list(create_data_training())
+    np.set_printoptions(precision=3, suppress=True)
 
-    stats = model.precision_for(training_data_set)
-    print("initial precision: ", stats.precision)
+    edge_size = EDGE_SIZE
+    desired_precision = 0.95
 
-    for round in range(100_000):
+    round = 0
+    model = Model(edge_size)
+    trainer = Trainer(edge_size)
+    training_data_set = list(trainer.create_data_training())
+    rounds_it_took_to_find_the_solution = []
+    global_round = 0
+    previous_precision = -1
+    rounds_with_current_precision = -1
+    while True:
+        global_round += 1
+
+        round += 1
         model.train(training_data_set)
-        stats = model.precision_for(training_data_set)
-        print("precision after round {} of training : {}".format(round, stats.precision))
+        stats = model.get_stats_for_data(training_data_set)
+        if stats.precision != previous_precision:
+            previous_precision = stats.precision
+            rounds_with_current_precision = 1
+        else:
+            rounds_with_current_precision += 1
+
+        if stats.precision >= desired_precision:
+            rounds_it_took_to_find_the_solution.append(round)
+            model = Model(edge_size)
+            round = 0
+            previous_precision = -1
+            rounds_with_current_precision = -1
+
+        if round > 10_000:  # TODO - find a better wqy to know whether the improvements have stopped
+
+            rounds_it_took_to_find_the_solution.append(1_000_000_000_000)
+            model = Model(edge_size)
+            round = 0
+            previous_precision = -1
+            rounds_with_current_precision = -1
+
+        if rounds_with_current_precision > 100:
+            rounds_it_took_to_find_the_solution.append(1_000_000_000_000)
+            model = Model(edge_size)
+            round = 0
+            previous_precision = -1
+            rounds_with_current_precision = -1
+
+        if len(rounds_it_took_to_find_the_solution) > 2:
+            good_solutions = len([e for e in rounds_it_took_to_find_the_solution if e < 1e12])
+            print(
+                f'{edge_size}x{edge_size}, prec.:{desired_precision}, rounds:{global_round}, attempts: {len(rounds_it_took_to_find_the_solution)}, good: {100 *good_solutions/len(rounds_it_took_to_find_the_solution):.2f}%, '
+                f', percentiles: '
+                f'{np.percentile(rounds_it_took_to_find_the_solution, [10,30, 50, 70, 90, 99, 100])}')
 
 
 if __name__ == '__main__':
+    # main()
+
+    """
+    PRECISION = 100%
+    for 4x4
+    4x4, after 14416 rounds, 2600 solution attempts, percentiles: [  1.     3.     4.     6.    12.    32.01 103.  ]
+    
+    
+    for 6x6, the number of rounds to finish training:
+    for edge size 6, after 14815, the percentiles: [1.00e+00 1.70e+00 3.25e+01 1.00e+12 1.00e+12 1.00e+12 1.00e+12]
+    
+    
+    for 8x8:
+    for edge size 8, after 4126 rounds, the percentiles: [1.830e+01 1.549e+02 1.000e+12 1.000e+12 1.000e+12 1.000e+12 1.000e+12]
+    
+     
+    for 10x10
+    for edge size 10, after 9273 rounds, the percentiles: [1.e+00 5.e+11 1.e+12 1.e+12 1.e+12 1.e+12 1.e+12]
+    -----------------
+    PRECISION = 0.95
+    4x4, prec.:0.95, rounds:14727, attempts: 3129, good: 100.00%, , percentiles: [ 1.    1.    3.    4.   11.   32.72 76.  ]
+    6x6, prec.:0.95, rounds:8715, attempts: 215, good: 80.93%, , percentiles: [1.e+00 1.e+00 1.e+00 4.e+00 1.e+12 1.e+12 1.e+12]
+    8x8, prec.:0.95, rounds:2117, solutions: 54, good: 81.48% attempts, percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+    10x10, prec.:0.95, rounds:1158, attempts: 47, good: 78.72%, , percentiles: [1.e+00 1.e+00 1.e+00 1.e+00 1.e+12 1.e+12 1.e+12]
+    
+    """
+    EDGE_SIZE = 12
     main()
